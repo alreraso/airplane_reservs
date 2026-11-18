@@ -2,7 +2,7 @@
 
 Sistema de reservas de vuelos en tiempo real (kata). Permite buscar vuelos, bloquear un asiento de forma temporal, confirmar la reserva y ver la ocupación en vivo, sin sobre-reservas.
 
-Proyecto personal para aprender **Spring Boot** y estructuras de arquitectura.
+Proyecto personal **Spring Boot** y estructuras de arquitectura.
 
 ## Requisitos
 
