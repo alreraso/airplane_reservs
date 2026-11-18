@@ -1,0 +1,544 @@
+openapi: 3.0.3
+info:
+  title: Flight Reservations API
+  version: 0.1.0
+  description: |
+    API for searching flights, holding seats temporarily, confirming reservations, and
+    receiving live updates.
+
+    ## How a booking works
+    1. `GET /api/flights` to find a flight.
+    2. `GET /api/flights/{flightId}/seats` to load the seat map.
+    3. `POST .../seats/{seatNumber}/hold` to block a seat for a limited time (default 5 minutes).
+    4. `POST .../reservations` before the hold expires. A confirmed seat is permanent.
+    5. Keep `GET /api/stream` open to see every change made by other clients.
+
+    ## Client identity
+    There is no login. The client generates a random `clientId` (for example a UUID) and sends it
+    on hold, release and confirm. Only the client that holds a seat can confirm or release it.
+    The server never returns another client's `clientId`.
+
+    ## Concurrency
+    If two clients hold the same seat at the same moment, exactly one receives `200`.
+    The other receives `409`. A hold that has expired counts as free, even before the cleanup job runs.
+
+    ## Errors
+    Every error uses the `ProblemDetail` format (RFC 9457) with content type `application/json`.
+    Validation errors (400) do not list individual fields yet; `detail` is a general message.
+
+    ## Dates and times
+    - `departureTime` and `arrivalTime` are local airport-style times with no timezone (`2026-11-19T07:30:00`).
+    - `heldUntil` and `createdAt` are UTC instants (`2026-11-18T20:13:41.417Z`).
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Flights
+    description: Search and consult flights
+  - name: Seats
+    description: Seat map, temporary holds
+  - name: Reservations
+    description: Confirm and pay
+  - name: Real time
+    description: Server-Sent Events stream
+  - name: Admin (simulation)
+    description: Unauthenticated on purpose, to simulate flight changes in demos
+
+paths:
+  /api/flights:
+    get:
+      tags: [Flights]
+      operationId: searchFlights
+      summary: Search flights
+      description: |
+        All filters are optional and combine with AND. Without `date`, returns every flight from today onward.
+        `origin` and `destination` are not case-sensitive.
+      parameters:
+        - name: origin
+          in: query
+          description: Origin airport code (IATA, 3 letters)
+          schema: { type: string, minLength: 3, maxLength: 3, example: BOG }
+        - name: destination
+          in: query
+          description: Destination airport code (IATA, 3 letters)
+          schema: { type: string, minLength: 3, maxLength: 3, example: MDE }
+        - name: date
+          in: query
+          description: Departure date, format `yyyy-MM-dd`
+          schema: { type: string, format: date, example: '2026-11-19' }
+      responses:
+        '200':
+          description: Matching flights ordered by departure time. Empty array when nothing matches.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FlightResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/flights/{flightId}:
+    get:
+      tags: [Flights]
+      operationId: getFlight
+      summary: Get one flight
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+      responses:
+        '200':
+          description: The flight
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlightResponse' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/flights/{flightId}/seats:
+    get:
+      tags: [Seats]
+      operationId: getSeatMap
+      summary: Get the seat map of a flight
+      description: Seats come in cabin order (row 1 to the last row, letters A to F).
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+        - name: clientId
+          in: query
+          required: false
+          description: If sent, seats held by this client come back with `heldByMe = true`.
+          schema: { type: string, example: 5b0f2a6c-8a1e-4f7e-9e0b-1c2d3e4f5a6b }
+      responses:
+        '200':
+          description: All seats of the flight
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SeatResponse' }
+              example:
+                - { seatNumber: 1A, status: AVAILABLE, heldUntil: null, heldByMe: false }
+                - { seatNumber: 1B, status: HELD, heldUntil: '2026-11-18T20:13:41.417Z', heldByMe: true }
+                - { seatNumber: 1C, status: BOOKED, heldUntil: null, heldByMe: false }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/flights/{flightId}/stats:
+    get:
+      tags: [Flights]
+      operationId: getFlightStats
+      summary: Occupancy metrics of a flight
+      description: Source for the dashboard. `available + held + booked = total`.
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+      responses:
+        '200':
+          description: Seat counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeatStats' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/flights/{flightId}/seats/{seatNumber}/hold:
+    post:
+      tags: [Seats]
+      operationId: holdSeat
+      summary: Hold a seat temporarily
+      description: |
+        Blocks the seat for the configured duration (default 5 minutes) and emits a `seat` event to all clients.
+
+        The call succeeds if the seat is `AVAILABLE`, if a previous hold has expired, or if the same `clientId`
+        already holds it (the timer restarts).
+        It fails with `409` if another client holds it or if it is booked.
+        It also fails with `409` if the flight is `CANCELLED` or `SOLD_OUT`.
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+        - $ref: '#/components/parameters/SeatNumber'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HoldRequest' }
+      responses:
+        '200':
+          description: Seat held. You must confirm before `heldUntil`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HoldResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Seat taken by someone else, already booked, or flight not bookable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+              examples:
+                seatTaken:
+                  value: { detail: Seat 3C is not available, instance: /api/flights/1/seats/3C/hold, status: 409, title: Conflict }
+                flightCancelled:
+                  value: { detail: Flight is CANCELLED and cannot be booked, instance: /api/flights/2/seats/1A/hold, status: 409, title: Conflict }
+    delete:
+      tags: [Seats]
+      operationId: releaseSeat
+      summary: Release a seat you hold
+      description: |
+        Idempotent. If the seat is not held by this client, nothing changes and the answer is still `204`.
+        When a hold is released, a `seat` event with `AVAILABLE` is emitted.
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+        - $ref: '#/components/parameters/SeatNumber'
+        - name: clientId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Released, or there was nothing to release
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/flights/{flightId}/reservations:
+    post:
+      tags: [Reservations]
+      operationId: confirmReservation
+      summary: Confirm a held seat and pay
+      description: |
+        Requires an active (not expired) hold made by the same `clientId`.
+
+        Claiming the seat, charging the card and saving the reservation happen as one unit.
+        If the payment is declined (`402`), the seat stays held by the caller and nothing is emitted.
+        If the hold expired, another client took the seat, or the caller never held it, the answer is `409`.
+
+        On success the seat becomes `BOOKED` permanently and a `seat` event is emitted.
+        If it was the last free seat, the flight becomes `SOLD_OUT` and a `flight` event is emitted.
+
+        **Demo payment:** any 16-digit card works, except `4000000000000002`, which is always declined.
+        Card data is validated and discarded; it is never stored or logged.
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReservationRequest' }
+            example:
+              clientId: 5b0f2a6c-8a1e-4f7e-9e0b-1c2d3e4f5a6b
+              seatNumber: 3C
+              passengerName: Ana Gómez
+              email: ana@example.com
+              cardNumber: '4111111111111111'
+      responses:
+        '201':
+          description: Reservation created. `code` is the ticket reference.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '402':
+          description: Payment declined. The hold is still valid until `heldUntil`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+              example: { detail: Payment was declined, instance: /api/flights/1/reservations, status: 402, title: Payment Required }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: No active hold for this client on that seat, or flight not bookable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+              example: { detail: 'You have no active hold on seat 2A (it may have expired)', instance: /api/flights/1/reservations, status: 409, title: Conflict }
+
+  /api/reservations/{code}:
+    get:
+      tags: [Reservations]
+      operationId: getReservationByCode
+      summary: Recover a reservation by its code
+      description: |
+        Returns the ticket after the confirmation screen was closed. The code is the only credential,
+        so there is no login: anyone who knows it can read the ticket.
+
+        - The code is **not case-sensitive** and surrounding spaces are ignored.
+        - The email is **masked** (`a**@example.com`). Card data is never stored, so it cannot be returned.
+        - `flight.status` is the **current** status. A cancelled flight shows up here.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Code returned when the reservation was confirmed
+          schema: { type: string, example: RSV-6367CA45 }
+      responses:
+        '200':
+          description: The reservation with its flight
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationDetailResponse' }
+        '404':
+          description: No reservation has that code
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+              example: { detail: Reservation RSV-00000000 not found, instance: /api/reservations/RSV-00000000, status: 404, title: Not Found }
+
+  /api/flights/{flightId}/status:
+    patch:
+      tags: [Admin (simulation)]
+      operationId: changeFlightStatus
+      summary: Change the status of a flight
+      description: |
+        Simulation endpoint, with no authentication. Emits a `flight` event to all clients.
+        Moving a flight to `CANCELLED` or `SOLD_OUT` blocks new holds and confirmations.
+        It does not release existing holds.
+      parameters:
+        - $ref: '#/components/parameters/FlightId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusRequest' }
+      responses:
+        '200':
+          description: Updated flight
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlightResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/stream:
+    get:
+      tags: [Real time]
+      operationId: streamEvents
+      summary: Live event stream (Server-Sent Events)
+      description: |
+        One global stream. Every event carries `flightId`; clients ignore flights they do not display.
+        The connection stays open without a timeout. A comment line (`: ping`) is sent every 15 seconds
+        to detect dead connections. Browsers reconnect automatically with `EventSource`.
+
+        **After a reconnect, reload state with the REST endpoints.** Events missed while disconnected are not replayed.
+
+        | Event | When | Payload |
+        |---|---|---|
+        | `hello` | On connect | plain text `connected` |
+        | `seat` | A seat is held, released, expired or booked | `SeatEvent` |
+        | `stats` | After every `seat` event | `SeatStats` (feeds the dashboard) |
+        | `flight` | Flight status changed (delayed, cancelled, sold out) | `FlightEvent` |
+
+        Browser example:
+        ```js
+        const source = new EventSource('/api/stream');
+        source.addEventListener('seat', e => console.log(JSON.parse(e.data)));
+        ```
+
+        Wire example:
+        ```
+        event:seat
+        data:{"flightId":3,"seatNumber":"1A","status":"HELD","heldUntil":"2026-11-18T20:13:41.417Z"}
+
+        event:stats
+        data:{"flightId":3,"total":48,"available":47,"held":1,"booked":0}
+        ```
+        Events are sent only after the database change is committed, so a rolled-back operation
+        (for example a declined payment) produces no event.
+      responses:
+        '200':
+          description: Open event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Frames of `event:` and `data:` lines. The `data` of each event is JSON, except `hello`.
+              examples:
+                seat:
+                  summary: Seat event
+                  value: |
+                    event:seat
+                    data:{"flightId":3,"seatNumber":"1A","status":"HELD","heldUntil":"2026-11-18T20:13:41.417Z"}
+
+components:
+  parameters:
+    FlightId:
+      name: flightId
+      in: path
+      required: true
+      schema: { type: integer, format: int64, example: 1 }
+    SeatNumber:
+      name: seatNumber
+      in: path
+      required: true
+      description: Row number followed by a letter A to F
+      schema: { type: string, example: 3C }
+
+  responses:
+    BadRequest:
+      description: |
+        Invalid input: missing or malformed body, failed validation, missing required parameter,
+        or a value that cannot be converted (for example an invalid date or enum).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+          example: { detail: Invalid request content., instance: /api/flights/1/reservations, status: 400, title: Bad Request }
+    NotFound:
+      description: The flight (or seat) does not exist
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+          example: { detail: Flight 99 not found, instance: /api/flights/99, status: 404, title: Not Found }
+
+  schemas:
+    FlightStatus:
+      type: string
+      description: |
+        `SCHEDULED` and `DELAYED` accept bookings. `CANCELLED` and `SOLD_OUT` do not.
+        `SOLD_OUT` is set automatically when the last seat is booked.
+      enum: [SCHEDULED, DELAYED, CANCELLED, SOLD_OUT]
+
+    SeatStatus:
+      type: string
+      description: |
+        `AVAILABLE` can be held. `HELD` is blocked temporarily by a client. `BOOKED` is permanent.
+      enum: [AVAILABLE, HELD, BOOKED]
+
+    FlightResponse:
+      type: object
+      required: [id, flightNumber, origin, destination, departureTime, arrivalTime, price, status, availableSeats]
+      properties:
+        id: { type: integer, format: int64, example: 1 }
+        flightNumber: { type: string, example: AV101 }
+        origin: { type: string, example: BOG }
+        destination: { type: string, example: MDE }
+        departureTime: { type: string, format: date-time, description: 'Local time with no timezone', example: '2026-11-19T07:30:00' }
+        arrivalTime: { type: string, format: date-time, description: 'Local time with no timezone', example: '2026-11-19T08:25:00' }
+        price: { type: number, description: Price in COP per seat, example: 189000.00 }
+        status: { $ref: '#/components/schemas/FlightStatus' }
+        availableSeats: { type: integer, format: int64, description: Seats with status AVAILABLE right now, example: 48 }
+
+    SeatResponse:
+      type: object
+      required: [seatNumber, status, heldByMe]
+      properties:
+        seatNumber: { type: string, example: 3C }
+        status: { $ref: '#/components/schemas/SeatStatus' }
+        heldUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC instant when the hold expires. Only present while `status` is `HELD`.
+        heldByMe:
+          type: boolean
+          description: True only when `clientId` was sent and this client holds the seat.
+
+    SeatStats:
+      type: object
+      required: [flightId, total, available, held, booked]
+      properties:
+        flightId: { type: integer, format: int64, example: 1 }
+        total: { type: integer, format: int64, example: 48 }
+        available: { type: integer, format: int64, example: 45 }
+        held: { type: integer, format: int64, example: 2 }
+        booked: { type: integer, format: int64, example: 1 }
+
+    HoldRequest:
+      type: object
+      required: [clientId]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+          description: Random identifier generated by the client. Keep it stable for the whole session.
+          example: 5b0f2a6c-8a1e-4f7e-9e0b-1c2d3e4f5a6b
+
+    HoldResponse:
+      type: object
+      required: [seatNumber, heldUntil]
+      properties:
+        seatNumber: { type: string, example: 3C }
+        heldUntil: { type: string, format: date-time, description: UTC instant when the hold expires, example: '2026-11-18T20:13:41.417Z' }
+
+    ReservationRequest:
+      type: object
+      required: [clientId, seatNumber, passengerName, email, cardNumber]
+      properties:
+        clientId: { type: string, minLength: 1, description: Same value used to hold the seat }
+        seatNumber: { type: string, minLength: 1, example: 3C }
+        passengerName: { type: string, minLength: 1, example: Ana Gómez }
+        email: { type: string, format: email, example: ana@example.com }
+        cardNumber:
+          type: string
+          pattern: '^\d{16}$'
+          description: 16 digits. Fictitious. `4000000000000002` is always declined.
+          example: '4111111111111111'
+
+    ReservationResponse:
+      type: object
+      required: [code, flightId, seatNumber, passengerName, amount, createdAt]
+      properties:
+        code: { type: string, description: Unique reservation code, example: RSV-6367CA45 }
+        flightId: { type: integer, format: int64, example: 1 }
+        seatNumber: { type: string, example: 3C }
+        passengerName: { type: string, example: Ana Gómez }
+        amount: { type: number, description: Amount charged in COP, example: 189000.00 }
+        createdAt: { type: string, format: date-time, example: '2026-11-18T19:13:13.491Z' }
+
+    ReservationDetailResponse:
+      type: object
+      required: [code, passengerName, maskedEmail, seatNumber, amount, createdAt, flight]
+      properties:
+        code: { type: string, example: RSV-6367CA45 }
+        passengerName: { type: string, example: Ana Gómez }
+        maskedEmail: { type: string, description: 'Email with the local part hidden', example: 'a**@example.com' }
+        seatNumber: { type: string, example: 3C }
+        amount: { type: number, description: Amount charged in COP, example: 189000.00 }
+        createdAt: { type: string, format: date-time, example: '2026-11-18T19:13:13.491Z' }
+        flight: { $ref: '#/components/schemas/FlightSummary' }
+
+    FlightSummary:
+      type: object
+      description: Current data of the flight of a reservation
+      required: [id, flightNumber, origin, destination, departureTime, arrivalTime, status]
+      properties:
+        id: { type: integer, format: int64, example: 1 }
+        flightNumber: { type: string, example: AV101 }
+        origin: { type: string, example: BOG }
+        destination: { type: string, example: MDE }
+        departureTime: { type: string, format: date-time, description: 'Local time with no timezone', example: '2026-11-19T07:30:00' }
+        arrivalTime: { type: string, format: date-time, description: 'Local time with no timezone', example: '2026-11-19T08:25:00' }
+        status: { $ref: '#/components/schemas/FlightStatus' }
+
+    StatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/FlightStatus' }
+
+    SeatEvent:
+      type: object
+      description: Payload of the `seat` SSE event
+      required: [flightId, seatNumber, status]
+      properties:
+        flightId: { type: integer, format: int64, example: 3 }
+        seatNumber: { type: string, example: 1A }
+        status: { $ref: '#/components/schemas/SeatStatus' }
+        heldUntil: { type: string, format: date-time, nullable: true }
+
+    FlightEvent:
+      type: object
+      description: Payload of the `flight` SSE event
+      required: [flightId, status]
+      properties:
+        flightId: { type: integer, format: int64, example: 2 }
+        status: { $ref: '#/components/schemas/FlightStatus' }
+
+    ProblemDetail:
+      type: object
+      description: Error body, RFC 9457
+      properties:
+        type: { type: string, description: Present only for some framework errors, example: 'about:blank' }
+        title: { type: string, example: Conflict }
+        status: { type: integer, example: 409 }
+        detail: { type: string, example: Seat 3C is not available }
+        instance: { type: string, example: /api/flights/1/seats/3C/hold }
