@@ -1,0 +1,83 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #f2f5f9; color: #1d2733; }
+h2, h3 { margin: 0 0 8px; }
+
+header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: #0b3d6b; color: #fff; }
+header h1 { margin: 0; font-size: 1.2rem; }
+nav { display: flex; gap: 8px; flex: 1; }
+.tab { background: transparent; color: #cfe3f5; padding: 6px 12px; }
+.tab:hover { background: #164f86; }
+.tab.active { background: #1d5f9c; color: #fff; }
+.conn { font-size: .8rem; }
+.conn.on { color: #7dff9b; }
+.conn.off { color: #ff9b9b; }
+
+main { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.between { justify-content: space-between; align-items: center; }
+label { display: flex; flex-direction: column; font-size: .8rem; gap: 4px; }
+input { padding: 8px; border: 1px solid #c4cdd8; border-radius: 6px; font-size: .95rem; }
+button { background: #0b3d6b; color: #fff; border: 0; padding: 9px 14px; border-radius: 6px; cursor: pointer; font: inherit; font-size: .9rem; }
+button:hover:not(:disabled) { background: #1d5f9c; }
+button.ghost { background: #e6edf5; color: #0b3d6b; }
+button.ghost:hover:not(:disabled) { background: #d4e0ee; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.empty { color: #667; padding: 12px; }
+.hint { color: #667; font-size: .85rem; margin: 4px 0; }
+.notice { background: #ffd9d9; color: #991b1b; padding: 10px 12px; border-radius: 8px; margin: 10px 0; }
+
+/* A flight row is a real <button> so it is reachable with the keyboard */
+button.flight { display: grid; grid-template-columns: 90px 1fr 120px 150px 110px; gap: 12px; align-items: center; width: 100%; text-align: left; background: #fff; color: inherit; padding: 16px; }
+button.flight:hover:not(:disabled) { background: #fff; outline: 2px solid #1d5f9c; }
+
+.badge { padding: 3px 8px; border-radius: 12px; font-size: .75rem; font-weight: 600; text-align: center; display: inline-block; }
+.badge.SCHEDULED { background: #d9f5e1; color: #166534; }
+.badge.DELAYED { background: #fff1c2; color: #92580a; }
+.badge.CANCELLED { background: #ffd9d9; color: #991b1b; }
+.badge.SOLD_OUT { background: #e2e2e2; color: #444; }
+.flight-meta { margin: 6px 0; }
+
+.stats { display: flex; gap: 12px; margin: 12px 0 8px; }
+.stat { flex: 1; padding: 10px; border-radius: 8px; text-align: center; background: #f2f5f9; }
+.stat b { display: block; font-size: 1.5rem; }
+.bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: #e6edf5; }
+.bar > span { display: block; height: 100%; transition: width .3s; }
+.bar .b-booked { background: #c0392b; }
+.bar .b-held { background: #f0a500; }
+
+.detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; margin-top: 16px; }
+.legend { display: flex; gap: 14px; font-size: .8rem; margin-bottom: 10px; }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.seat-map { display: flex; flex-direction: column; gap: 6px; }
+.seat-row { display: flex; gap: 6px; align-items: center; }
+.row-label { width: 18px; font-size: .75rem; color: #667; text-align: right; }
+.aisle { width: 22px; }
+.seat { display: inline-block; width: 40px; height: 36px; border-radius: 6px 6px 3px 3px; border: 0; padding: 0; font-size: .75rem; color: #fff; }
+.legend .seat { width: 18px; height: 16px; }
+.seat.available { background: #2e9e5b; }
+.seat.available:hover:not(:disabled) { background: #237a46; }
+.seat.held { background: #f0a500; }
+.seat.mine { background: #1d5f9c; }
+.seat.booked { background: #c0392b; }
+.seat:disabled { cursor: not-allowed; opacity: 1; }
+.seat.available:disabled { opacity: .6; }
+
+.checkout { display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+.countdown { margin: 0; }
+.ticket { background: #effaf2; border: 2px dashed #2e9e5b; border-radius: 10px; padding: 16px; }
+.ticket .code { font-size: 1.6rem; font-weight: 700; letter-spacing: 2px; }
+.code-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0; }
+button.copy { padding: 6px 12px; font-size: .85rem; }
+.detail-list { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 12px 0 0; }
+.detail-list dt { color: #667; }
+.detail-list dd { margin: 0; }
+
+.dash-row { display: grid; grid-template-columns: 240px 1fr 260px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #eef1f5; }
+.admin-row { grid-template-columns: 1fr 120px auto; }
+.log { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, monospace; font-size: .85rem; }
+.log li { padding: 3px 0; border-bottom: 1px solid #f0f3f7; }
+
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1d2733; color: #fff; padding: 10px 18px; border-radius: 8px; z-index: 10; }
+.toast.error { background: #991b1b; }
