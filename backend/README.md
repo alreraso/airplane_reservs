@@ -1,7 +1,7 @@
 # Backend: API de reservas de vuelos
 
 Spring Boot 4.1 · Java 17 · Maven (wrapper incluido) · H2 en memoria.
-El mismo proceso expone la API REST, el stream de eventos en tiempo real (SSE) y sirve el frontend de `../frontend/`.
+El mismo proceso expone la API REST, el stream de eventos en tiempo real (SSE) y sirve el frontend React ya construido (`../frontend/dist`).
 
 Contrato formal (OpenAPI): [../docs/shared/openapi.yaml](../docs/shared/openapi.yaml). Explicación de cómo funciona: [../docs/shared/how-it-works.md](../docs/shared/how-it-works.md).
 
@@ -9,19 +9,27 @@ Contrato formal (OpenAPI): [../docs/shared/openapi.yaml](../docs/shared/openapi.
 
 **Requisito:** Java 17 o superior (`java -version`). Maven no hace falta: lo descarga `mvnw`.
 
-Ejecuta **desde la carpeta `backend/`** (el frontend se busca en `../frontend/`, ruta relativa al directorio de trabajo):
+Ejecuta **desde la carpeta `backend/`** (el frontend se busca en `../frontend/dist`, ruta relativa al directorio de trabajo):
 
 ```bash
 cd backend
 ./mvnw spring-boot:run
 ```
 
+La API funciona sola. Para ver también la interfaz en `http://localhost:8080/`, construye antes el frontend (requiere Node 20 o superior):
+
+```bash
+cd frontend && npm install && npm run build
+```
+
+O usa el servidor de desarrollo de Vite, que reenvía `/api` a este backend (ver [../frontend/README.md](../frontend/README.md)).
+
 Disponible en `http://localhost:8080`. La primera ejecución descarga dependencias y tarda más.
 
 | Qué | Dónde |
 |---|---|
 | API | `http://localhost:8080/api/...` |
-| Frontend | `http://localhost:8080/` |
+| Frontend (tras `npm run build`) | `http://localhost:8080/` |
 | Stream de eventos | `http://localhost:8080/api/stream` |
 
 ### Como jar
@@ -58,7 +66,7 @@ Base de datos H2 **en memoria**. Al arrancar se cargan 5 vuelos de ejemplo con 4
 | Síntoma | Causa y solución |
 |---|---|
 | `Port 8080 was already in use` | Otro proceso usa el puerto. Cierra el otro o usa `--server.port=9090` |
-| `/` devuelve 404 | Ejecutaste desde otra carpeta (hazlo desde `backend/`), o `frontend/index.html` no existía al arrancar (reinicia) |
+| `/` devuelve 404 | No existe `frontend/dist` (ejecuta `npm run build` y **reinicia** el backend, porque detecta la página de inicio al arrancar), o ejecutaste desde otra carpeta (hazlo desde `backend/`) |
 | `UnsupportedClassVersionError` | Tu Java es anterior a 17 |
 
 ## 2. Conceptos que necesitas para usar la API
@@ -87,6 +95,7 @@ Todos los ejemplos usan `curl` contra `localhost:8080`. Los cuerpos y respuestas
 | 7 | `POST /api/flights/{flightId}/reservations` | Confirmar y pagar | 201 |
 | 8 | `PATCH /api/flights/{flightId}/status` | Cambiar estado del vuelo (simulación) | 200 |
 | 9 | `GET /api/stream` | Eventos en vivo (SSE) | 200 |
+| 10 | `GET /api/reservations/{code}` | Recuperar una reserva por su código | 200 |
 
 ---
 
@@ -295,6 +304,38 @@ const source = new EventSource('/api/stream');
 source.addEventListener('seat', (e) => console.log(JSON.parse(e.data)));
 ```
 
+### 10. Recuperar una reserva por su código
+
+`GET /api/reservations/{code}`
+
+Sirve para volver a ver el boleto después de cerrar la pantalla de confirmación.
+
+```bash
+curl localhost:8080/api/reservations/RSV-6367CA45
+```
+
+```json
+{
+  "code": "RSV-6367CA45",
+  "passengerName": "Ana Gómez",
+  "maskedEmail": "a**@example.com",
+  "seatNumber": "3C",
+  "amount": 189000.00,
+  "createdAt": "2026-11-18T19:13:13.491Z",
+  "flight": {
+    "id": 1, "flightNumber": "AV101", "origin": "BOG", "destination": "MDE",
+    "departureTime": "2026-11-19T07:30:00", "arrivalTime": "2026-11-19T08:25:00",
+    "status": "SCHEDULED"
+  }
+}
+```
+
+- El código **no distingue mayúsculas** y se ignoran los espacios alrededor, porque suele pegarse.
+- El **correo sale enmascarado**. Los datos de la tarjeta no se guardan, así que no existen para devolver.
+- `flight.status` es el estado **actual**: si el vuelo se cancela después de comprar, aquí se ve.
+- `404` si ningún código coincide.
+- **El código es la única credencial** (no hay login). Son 8 caracteres hexadecimales y no hay límite de intentos, así que un atacante podría probar códigos. Es aceptable para un kata; ver [decisions.md §10](../docs/shared/decisions.md#10-identidad-del-cliente).
+
 ## 4. Formato de errores
 
 Todos los errores usan el mismo formato (RFC 9457):
@@ -312,7 +353,7 @@ Todos los errores usan el mismo formato (RFC 9457):
 |---|---|
 | 400 | Datos inválidos: cuerpo ausente o mal formado, validación fallida, parámetro obligatorio ausente, fecha o enum inválido. Hoy `detail` es un mensaje general (no lista campo por campo) |
 | 402 | Pago rechazado |
-| 404 | Vuelo o asiento inexistente |
+| 404 | Vuelo, asiento o reserva inexistente |
 | 409 | Conflicto: asiento no disponible, bloqueo inexistente o vencido, vuelo no reservable |
 
 ## 5. Flujo completo de ejemplo
