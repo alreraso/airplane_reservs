@@ -30,13 +30,10 @@ Casos reales de esta sesión donde hubo que revisar o corregir el trabajo de la 
 - **Limpieza**: un nombre de clase totalmente calificado quedó dentro de `SeatBookingService` y se reemplazó por un `import`.
 - **Orden de arranque**: al probar, `/` respondía 404 porque `index.html` se creó con la aplicación ya iniciada (Spring resuelve la página de bienvenida al arrancar). Se confirmó reiniciando; no era un error de configuración.
 
-> **Completar por quien entrega:** añade aquí tus propias correcciones. Ejemplos de lo que un evaluador espera: una decisión de la IA que cambiaste (y por qué), código que descartaste, o un riesgo que detectaste al revisar (por ejemplo, el `clientId` anónimo o el endpoint de estado abierto, ver decisions §10).
 
 ## 4. Impacto
 
 Lo que no se puede afirmar con honestidad desde aquí es el tiempo ahorrado.
-
-> **Completar por quien entrega:** estimación propia de tiempo ahorrado y áreas donde la IA aportó más valor.
 
 Observaciones objetivas:
 
